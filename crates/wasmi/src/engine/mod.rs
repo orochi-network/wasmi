@@ -11,6 +11,8 @@ mod func_types;
 mod resumable;
 pub mod stack;
 mod traits;
+pub mod predator;
+pub mod trace;
 
 #[cfg(test)]
 mod tests;

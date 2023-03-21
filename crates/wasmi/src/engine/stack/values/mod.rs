@@ -87,6 +87,16 @@ impl ValueStack {
         }
     }
 
+    #[inline]
+    pub fn stack_depth(&self) -> usize{
+        self.stack_ptr
+    }
+
+    #[inline]
+    pub fn get(&self, index:usize) -> UntypedValue {
+        self.entries[index]
+    }
+
     /// Returns the current [`ValueStackPtr`] of `self`.
     ///
     /// The returned [`ValueStackPtr`] points to the top most value on the [`ValueStack`].

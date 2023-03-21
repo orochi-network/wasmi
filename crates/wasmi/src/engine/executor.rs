@@ -32,6 +32,7 @@ use crate::{
 };
 use core::cmp::{self};
 use wasmi_core::{Pages, UntypedValue};
+use super::{predator::Predator};
 
 /// The outcome of a Wasm execution.
 ///
@@ -200,7 +201,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             ctx,
             value_stack,
             call_stack,
-            code_map,
+            code_map
         }
     }
 
@@ -208,7 +209,38 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     #[inline(always)]
     fn execute(mut self) -> Result<WasmOutcome, TrapCode> {
         use Instruction as Instr;
+        let mut local = Vec::<UntypedValue>::new();
+        for i in 0..self.value_stack.stack_depth() {
+            local.push(self.value_stack.get(i));
+        }
+        let mut predator = Predator::new(local);
+        predator.update_trace();
         loop {
+            match *self.ip.get() {
+                Instr::LocalGet {local_depth} => {
+                    let value = self.sp.nth_back(local_depth.clone().into_inner());
+                    predator.set_instruction(Instr::LocalGet {local_depth});
+                    predator.push(value);
+                    predator.set_iaddr(self.ip);
+                    predator.update_trace();
+                },
+                Instr::I64Add => {
+                    predator.set_instruction(Instr::I64Add);
+                    predator.set_iaddr(self.ip);
+                    let a:i64 = predator.pop().into();
+                    let b:i64 = predator.pop().into();
+                    predator.push(UntypedValue::from(a+b));
+                    predator.update_trace();
+                },
+                Instr::Return(drop_keep) => {
+                    predator.set_instruction(Instr::Return(drop_keep));
+                    predator.set_iaddr(self.ip);
+                    predator.update_trace();
+                    println!("{:#?}", predator.get_trace());
+                },
+                _ => println!("Untranslated >> {:?}", self.ip.get())
+            };
+
             match *self.ip.get() {
                 Instr::LocalGet { local_depth } => self.visit_local_get(local_depth),
                 Instr::LocalSet { local_depth } => self.visit_local_set(local_depth),
@@ -419,7 +451,9 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 Instr::I64Extend16S => self.visit_i64_extend16_s(),
                 Instr::I64Extend32S => self.visit_i64_extend32_s(),
             }
+
         }
+
     }
 
     /// Executes a generic Wasm `store[N_{s|u}]` operation.
@@ -1352,6 +1386,17 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         fn visit_i64_trunc_f64_u(i64_trunc_f64_u);
     }
 }
+/**
+fn visit_i64_add(i64_add);
+
+fn visit_i64_add(i64_add); )* ) => {
+
+            #[inline(always)]
+            fn visit_i64_add(&mut self) {
+                self.execute_binary(i64_add)
+            }
+
+*/
 
 macro_rules! impl_visit_binary {
     ( $( fn $visit_ident:ident($untyped_ident:ident); )* ) => {
@@ -1364,6 +1409,7 @@ macro_rules! impl_visit_binary {
     }
 }
 impl<'ctx, 'engine> Executor<'ctx, 'engine> {
+
     impl_visit_binary! {
         fn visit_i32_eq(i32_eq);
         fn visit_i32_ne(i32_ne);
@@ -1412,6 +1458,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         fn visit_i32_shr_u(i32_shr_u);
         fn visit_i32_rotl(i32_rotl);
         fn visit_i32_rotr(i32_rotr);
+
 
         fn visit_i64_add(i64_add);
         fn visit_i64_sub(i64_sub);

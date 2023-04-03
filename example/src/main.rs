@@ -45,6 +45,9 @@ fn main() -> Result<()> {
         .call(&mut store, (4, 5))
         .expect("Unable to execute function");
     println!("Function result is: {}", result);
-    println!("{:?}", wasm_predator.clone().lock().unwrap().get_trace());
+    let execution_trace = wasm_predator.clone().lock().unwrap().get_trace();
+    for i in 0..execution_trace.len() {
+        println!("{:#?}", execution_trace[i]);
+    }
     Ok(())
 }

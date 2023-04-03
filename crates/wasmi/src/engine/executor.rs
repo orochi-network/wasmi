@@ -216,19 +216,26 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
     #[inline(always)]
     fn execute(mut self) -> Result<WasmOutcome, TrapCode> {
         use Instruction as Instr;
+        let mut local = Vec::<UntypedValue>::new();
+        for i in 0..self.value_stack.stack_depth() {
+            local.push(self.value_stack.get(i));
+        }
+
+        match self.predator.clone() {
+            Some(p) => {
+                let predator = Arc::clone(&p);
+                let mut predator = predator.lock().unwrap();
+                predator.set_local(local);
+                predator.update_trace();
+            }
+            None => {}
+        }
+
         loop {
             match self.predator.clone() {
                 Some(p) => {
-                    let mut local = Vec::<UntypedValue>::new();
-                    for i in 0..self.value_stack.stack_depth() {
-                        local.push(self.value_stack.get(i));
-                    }
                     let predator = Arc::clone(&p);
                     let mut predator = predator.lock().unwrap();
-
-                    predator.set_local(local);
-                    predator.update_trace();
-
                     match *self.ip.get() {
                         Instr::LocalGet { local_depth } => {
                             let value = self.sp.nth_back(local_depth.clone().into_inner());

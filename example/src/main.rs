@@ -1,12 +1,15 @@
-use anyhow::{ Result};
+use anyhow::Result;
+use std::sync::{Arc, Mutex};
+use wasmi::predator::Predator;
+use wasmi::Module;
 use wasmi::*;
 use wat;
-use wasmi::Module;
 
 fn main() -> Result<()> {
     // First step is to create the Wasm execution engine with some config.
     // In this example we are using the default configuration.
-    let engine = Engine::default();
+    let wasm_predator = Arc::new(Mutex::new(Predator::new()));
+    let engine = Engine::new_with_predator(wasm_predator.clone());
     let wat = r#"
     (module
         (func (export "add_values") (param i64 i64) (result i64)
@@ -38,7 +41,10 @@ fn main() -> Result<()> {
     let add_function = instance.get_typed_func::<(i64, i64), i64>(&store, "add_values")?;
 
     // And finally we can call the wasm!
-    let result = add_function.call(&mut store, (4,5)).expect("Unable to execute function");
-    print!("Function result is: {}", result);
+    let result = add_function
+        .call(&mut store, (4, 5))
+        .expect("Unable to execute function");
+    println!("Function result is: {}", result);
+    println!("{:?}", wasm_predator.clone().lock().unwrap().get_trace());
     Ok(())
 }

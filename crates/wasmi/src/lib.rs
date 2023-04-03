@@ -127,6 +127,7 @@ pub use self::{
         StackLimits,
         TypedResumableCall,
         TypedResumableInvocation,
+        predator
     },
     error::Error,
     externref::ExternRef,

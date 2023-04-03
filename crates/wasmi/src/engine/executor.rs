@@ -1,38 +1,24 @@
+use super::predator::Predator;
 use crate::{
     core::TrapCode,
     engine::{
         bytecode::{
-            BranchParams,
-            DataSegmentIdx,
-            ElementSegmentIdx,
-            FuncIdx,
-            GlobalIdx,
-            Instruction,
-            LocalDepth,
-            Offset,
-            SignatureIdx,
-            TableIdx,
+            BranchParams, DataSegmentIdx, ElementSegmentIdx, FuncIdx, GlobalIdx, Instruction,
+            LocalDepth, Offset, SignatureIdx, TableIdx,
         },
         cache::InstanceCache,
         code_map::{CodeMap, InstructionPtr},
         config::FuelCosts,
         stack::{CallStack, ValueStackPtr},
-        DropKeep,
-        FuncFrame,
-        ValueStack,
+        DropKeep, FuncFrame, ValueStack,
     },
     func::FuncEntity,
     table::TableEntity,
-    FuelConsumptionMode,
-    Func,
-    FuncRef,
-    Instance,
-    StoreInner,
-    Table,
+    FuelConsumptionMode, Func, FuncRef, Instance, StoreInner, Table,
 };
+use alloc::sync::{Arc, Mutex};
 use core::cmp::{self};
 use wasmi_core::{Pages, UntypedValue};
-use super::{predator::Predator};
 
 /// The outcome of a Wasm execution.
 ///
@@ -101,6 +87,20 @@ pub fn execute_wasm<'engine>(
     Executor::new(ctx, cache, value_stack, call_stack, code_map).execute()
 }
 
+#[inline(never)]
+pub fn execute_wasm_with_predator<'engine>(
+    ctx: &mut StoreInner,
+    cache: &'engine mut InstanceCache,
+    value_stack: &'engine mut ValueStack,
+    call_stack: &'engine mut CallStack,
+    code_map: &'engine CodeMap,
+    predator: Option<Arc<Mutex<Predator>>>,
+) -> Result<WasmOutcome, TrapCode> {
+    let mut instance = Executor::new(ctx, cache, value_stack, call_stack, code_map);
+    instance.set_predator(predator);
+    instance.execute()
+}
+
 /// The function signature of Wasm load operations.
 type WasmLoadOp =
     fn(memory: &[u8], address: UntypedValue, offset: u32) -> Result<UntypedValue, TrapCode>;
@@ -164,6 +164,8 @@ struct Executor<'ctx, 'engine> {
     ///
     /// This is used to lookup Wasm function information.
     code_map: &'engine CodeMap,
+    /// Predator instance
+    predator: Option<Arc<Mutex<Predator>>>,
 }
 
 macro_rules! forward_call {
@@ -201,45 +203,58 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
             ctx,
             value_stack,
             call_stack,
-            code_map
+            code_map,
+            predator: None::<Arc<Mutex<Predator>>>,
         }
+    }
+
+    pub fn set_predator(&mut self, predator: Option<Arc<Mutex<Predator>>>) {
+        self.predator = predator;
     }
 
     /// Executes the function frame until it returns or traps.
     #[inline(always)]
     fn execute(mut self) -> Result<WasmOutcome, TrapCode> {
         use Instruction as Instr;
-        let mut local = Vec::<UntypedValue>::new();
-        for i in 0..self.value_stack.stack_depth() {
-            local.push(self.value_stack.get(i));
-        }
-        let mut predator = Predator::new(local);
-        predator.update_trace();
         loop {
-            match *self.ip.get() {
-                Instr::LocalGet {local_depth} => {
-                    let value = self.sp.nth_back(local_depth.clone().into_inner());
-                    predator.set_instruction(Instr::LocalGet {local_depth});
-                    predator.push(value);
-                    predator.set_iaddr(self.ip);
+            match self.predator.clone() {
+                Some(p) => {
+                    let mut local = Vec::<UntypedValue>::new();
+                    for i in 0..self.value_stack.stack_depth() {
+                        local.push(self.value_stack.get(i));
+                    }
+                    let predator = Arc::clone(&p);
+                    let mut predator = predator.lock().unwrap();
+
+                    predator.set_local(local);
                     predator.update_trace();
-                },
-                Instr::I64Add => {
-                    predator.set_instruction(Instr::I64Add);
-                    predator.set_iaddr(self.ip);
-                    let a:i64 = predator.pop().into();
-                    let b:i64 = predator.pop().into();
-                    predator.push(UntypedValue::from(a+b));
-                    predator.update_trace();
-                },
-                Instr::Return(drop_keep) => {
-                    predator.set_instruction(Instr::Return(drop_keep));
-                    predator.set_iaddr(self.ip);
-                    predator.update_trace();
-                    println!("{:#?}", predator.get_trace());
-                },
-                _ => println!("Untranslated >> {:?}", self.ip.get())
-            };
+
+                    match *self.ip.get() {
+                        Instr::LocalGet { local_depth } => {
+                            let value = self.sp.nth_back(local_depth.clone().into_inner());
+                            predator.set_instruction(Instr::LocalGet { local_depth });
+                            predator.push(value);
+                            predator.set_iaddr(self.ip);
+                            predator.update_trace();
+                        }
+                        Instr::I64Add => {
+                            predator.set_instruction(Instr::I64Add);
+                            predator.set_iaddr(self.ip);
+                            let a: i64 = predator.pop().into();
+                            let b: i64 = predator.pop().into();
+                            predator.push(UntypedValue::from(a + b));
+                            predator.update_trace();
+                        }
+                        Instr::Return(drop_keep) => {
+                            predator.set_instruction(Instr::Return(drop_keep));
+                            predator.set_iaddr(self.ip);
+                            predator.update_trace();
+                        }
+                        _ => println!("Untranslated >> {:?}", self.ip.get()),
+                    };
+                }
+                None => {}
+            }
 
             match *self.ip.get() {
                 Instr::LocalGet { local_depth } => self.visit_local_get(local_depth),
@@ -451,9 +466,7 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                 Instr::I64Extend16S => self.visit_i64_extend16_s(),
                 Instr::I64Extend32S => self.visit_i64_extend32_s(),
             }
-
         }
-
     }
 
     /// Executes a generic Wasm `store[N_{s|u}]` operation.
@@ -1409,7 +1422,6 @@ macro_rules! impl_visit_binary {
     }
 }
 impl<'ctx, 'engine> Executor<'ctx, 'engine> {
-
     impl_visit_binary! {
         fn visit_i32_eq(i32_eq);
         fn visit_i32_ne(i32_ne);

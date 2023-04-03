@@ -8,11 +8,11 @@ pub mod executor;
 mod func_args;
 mod func_builder;
 mod func_types;
+pub mod predator;
 mod resumable;
 pub mod stack;
-mod traits;
-pub mod predator;
 pub mod trace;
+mod traits;
 
 #[cfg(test)]
 mod tests;
@@ -22,11 +22,7 @@ pub use self::{
     code_map::FuncBody,
     config::{Config, FuelConsumptionMode},
     func_builder::{
-        FuncBuilder,
-        FuncTranslatorAllocations,
-        Instr,
-        RelativeDepth,
-        TranslationError,
+        FuncBuilder, FuncTranslatorAllocations, Instr, RelativeDepth, TranslationError,
     },
     resumable::{ResumableCall, ResumableInvocation, TypedResumableCall, TypedResumableInvocation},
     stack::StackLimits,
@@ -36,8 +32,9 @@ use self::{
     bytecode::Instruction,
     cache::InstanceCache,
     code_map::CodeMap,
-    executor::{execute_wasm, WasmOutcome},
+    executor::{execute_wasm_with_predator, WasmOutcome},
     func_types::FuncTypeRegistry,
+    predator::Predator,
     resumable::ResumableCallBase,
     stack::{FuncFrame, Stack, ValueStack},
 };
@@ -48,11 +45,7 @@ pub(crate) use self::{
 use crate::{
     core::{Trap, TrapCode},
     func::FuncEntity,
-    AsContext,
-    AsContextMut,
-    Func,
-    FuncType,
-    StoreContextMut,
+    AsContext, AsContextMut, Func, FuncType, StoreContextMut,
 };
 use alloc::{sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -121,6 +114,18 @@ impl Engine {
         Self {
             inner: Arc::new(EngineInner::new(config)),
         }
+    }
+
+    /// Create new instance of [`Engine`] with [`Predator`]
+    pub fn new_with_predator(predator: Arc<std::sync::Mutex<Predator>>) -> Self {
+        Self {
+            inner: Arc::new(EngineInner::new_with_predator(&Config::default(), predator)),
+        }
+    }
+
+    /// Get [`Predator`] from [`EngineInner`]
+    pub fn get_predator(&self) -> Option<Arc<std::sync::Mutex<Predator>>> {
+        self.inner.get_predator()
     }
 
     /// Returns a shared reference to the [`Config`] of the [`Engine`].
@@ -309,6 +314,8 @@ pub struct EngineInner {
     /// operate on. Therefore a Wasm engine is required to provide stacks and
     /// ideally recycles old ones since creation of a new stack is rather expensive.
     stacks: Mutex<EngineStacks>,
+    /// Single instance of predator
+    predator: Option<Arc<std::sync::Mutex<predator::Predator>>>,
 }
 
 /// The engine's stacks for reuse.
@@ -357,7 +364,26 @@ impl EngineInner {
             config: *config,
             res: RwLock::new(EngineResources::new()),
             stacks: Mutex::new(EngineStacks::new(config)),
+            predator: None,
         }
+    }
+
+    /// Creates a new [`EngineInner`] with the given [`Config`] and [`Predator`].
+    pub fn new_with_predator(
+        config: &Config,
+        predator: Arc<std::sync::Mutex<predator::Predator>>,
+    ) -> Self {
+        Self {
+            config: *config,
+            res: RwLock::new(EngineResources::new()),
+            stacks: Mutex::new(EngineStacks::new(config)),
+            predator: Some(predator),
+        }
+    }
+
+    /// Get instance of [`Predator`] of current [`EngineInner`].
+    pub fn get_predator(&self) -> Option<Arc<std::sync::Mutex<predator::Predator>>> {
+        self.predator.clone()
     }
 
     fn config(&self) -> &Config {
@@ -407,7 +433,7 @@ impl EngineInner {
     {
         let res = self.res.read();
         let mut stack = self.stacks.lock().reuse_or_new();
-        let results = EngineExecutor::new(&res, &mut stack)
+        let results = EngineExecutor::new_with_predator(&res, &mut stack, self.predator.clone())
             .execute_func(ctx, func, params, results)
             .map_err(TaggedTrap::into_trap);
         self.stacks.lock().recycle(stack);
@@ -565,12 +591,31 @@ pub struct EngineExecutor<'engine> {
     res: &'engine EngineResources,
     /// The value and call stacks.
     stack: &'engine mut Stack,
+    /// Predator instance
+    predator: Option<Arc<std::sync::Mutex<Predator>>>,
 }
 
 impl<'engine> EngineExecutor<'engine> {
     /// Creates a new [`EngineExecutor`] with the given [`StackLimits`].
     fn new(res: &'engine EngineResources, stack: &'engine mut Stack) -> Self {
-        Self { res, stack }
+        Self {
+            res,
+            stack,
+            predator: None,
+        }
+    }
+
+    /// Creates a new [`EngineExecutor`] with the given [`StackLimits`] and [`Predator`].
+    pub fn new_with_predator(
+        res: &'engine EngineResources,
+        stack: &'engine mut Stack,
+        predator: Option<Arc<std::sync::Mutex<Predator>>>,
+    ) -> Self {
+        Self {
+            res,
+            stack,
+            predator,
+        }
     }
 
     /// Executes the given [`Func`] using the given `params`.
@@ -743,6 +788,14 @@ impl<'engine> EngineExecutor<'engine> {
         let value_stack = &mut self.stack.values;
         let call_stack = &mut self.stack.frames;
         let code_map = &self.res.code_map;
-        execute_wasm(store_inner, cache, value_stack, call_stack, code_map).map_err(make_trap)
+        execute_wasm_with_predator(
+            store_inner,
+            cache,
+            value_stack,
+            call_stack,
+            code_map,
+            self.predator.clone(),
+        )
+        .map_err(make_trap)
     }
 }

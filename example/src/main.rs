@@ -8,6 +8,7 @@ use wat;
 fn main() -> Result<()> {
     // First step is to create the Wasm execution engine with some config.
     // In this example we are using the default configuration.
+    // We add new instance of Predator here to hunt for the trace
     let wasm_predator = Arc::new(Mutex::new(Predator::new()));
     let engine = Engine::new_with_predator(wasm_predator.clone());
     let wat = r#"
@@ -24,9 +25,9 @@ fn main() -> Result<()> {
 
     // All Wasm objects operate within the context of a `Store`.
     // Each `Store` has a type parameter to store host-specific data,
-    // which in this case we are using `42` for.
+    // which in this case we are using `0` for.
     type HostState = u32;
-    let mut store = Store::new(&engine, 42);
+    let mut store = Store::new(&engine, 0);
 
     // In order to create Wasm module instances and link their imports
     // and exports we require a `Linker`.
@@ -36,7 +37,8 @@ fn main() -> Result<()> {
     // type signature of the function with `get_typed_func`.
     //
     // Also before using an instance created this way we need to start it.
-    // linker.define("host", "add_values", host_hello)?;
+    // We trigger the function has the name `add_values` with given the exactly
+    // parameters.
     let instance = linker.instantiate(&mut store, &module)?.start(&mut store)?;
     let add_function = instance.get_typed_func::<(i64, i64), i64>(&store, "add_values")?;
 
@@ -44,6 +46,8 @@ fn main() -> Result<()> {
     let result = add_function
         .call(&mut store, (4, 5))
         .expect("Unable to execute function");
+
+    // Print the function result and print execution trace
     println!("Function result is: {}", result);
     let execution_trace = wasm_predator.clone().lock().unwrap().get_trace();
     for i in 0..execution_trace.len() {

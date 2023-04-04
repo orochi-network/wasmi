@@ -1406,17 +1406,6 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
         fn visit_i64_trunc_f64_u(i64_trunc_f64_u);
     }
 }
-/**
-fn visit_i64_add(i64_add);
-
-fn visit_i64_add(i64_add); )* ) => {
-
-            #[inline(always)]
-            fn visit_i64_add(&mut self) {
-                self.execute_binary(i64_add)
-            }
-
-*/
 
 macro_rules! impl_visit_binary {
     ( $( fn $visit_ident:ident($untyped_ident:ident); )* ) => {

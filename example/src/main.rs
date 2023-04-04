@@ -8,15 +8,16 @@ use wat;
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
+    let is_mul = args.len() == 2 && args[1].to_lowercase().eq(&"--mul");
     // First step is to create the Wasm execution engine with some config.
     // In this example we are using the default configuration.
     // We add new instance of Predator here to hunt for the trace
     let wasm_predator = Arc::new(Mutex::new(Predator::new()));
     let engine = Engine::new_with_predator(wasm_predator.clone());
-    let wat = if args.len() == 2 && args[1].to_lowercase().eq(&"--mul") {
+    let wat = if is_mul {
         r#"
         (module
-            (func (export "add_values") (param i64 i64) (result i64)
+            (func (export "mul_values") (param i64 i64) (result i64)
             local.get 0
             local.get 1
             i64.mul))
@@ -52,10 +53,14 @@ fn main() -> Result<()> {
     // We trigger the function has the name `add_values` with given the exactly
     // parameters.
     let instance = linker.instantiate(&mut store, &module)?.start(&mut store)?;
-    let add_function = instance.get_typed_func::<(i64, i64), i64>(&store, "add_values")?;
+
+    let executing_function = instance.get_typed_func::<(i64, i64), i64>(
+        &store,
+        if is_mul { "mul_values" } else { "add_values" },
+    )?;
 
     // And finally we can call the wasm!
-    let result = add_function
+    let result = executing_function
         .call(&mut store, (4, 5))
         .expect("Unable to execute function");
 

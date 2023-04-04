@@ -1,3 +1,19 @@
+## Testing
+
+MUL example
+
+```
+RUST_BACKTRACE=1 cargo run --bin example -- --mul
+```
+
+ADD example
+
+```
+RUST_BACKTRACE=1 cargo run --bin example
+```
+
+## Trace structure
+
 We add some modifies to extract the execution trace from `wasmi`.
 
 -   **iaddr:** Address of instruction in the memory

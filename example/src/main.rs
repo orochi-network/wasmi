@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::env;
 use std::sync::{Arc, Mutex};
 use wasmi::predator::Predator;
 use wasmi::Module;
@@ -6,18 +7,29 @@ use wasmi::*;
 use wat;
 
 fn main() -> Result<()> {
+    let args: Vec<String> = env::args().collect();
     // First step is to create the Wasm execution engine with some config.
     // In this example we are using the default configuration.
     // We add new instance of Predator here to hunt for the trace
     let wasm_predator = Arc::new(Mutex::new(Predator::new()));
     let engine = Engine::new_with_predator(wasm_predator.clone());
-    let wat = r#"
-    (module
-        (func (export "add_values") (param i64 i64) (result i64)
-          local.get 0
-          local.get 1
-          i64.add))
-    "#;
+    let wat = if args.len() == 2 && args[1].to_lowercase().eq(&"--mul") {
+        r#"
+        (module
+            (func (export "add_values") (param i64 i64) (result i64)
+            local.get 0
+            local.get 1
+            i64.mul))
+        "#
+    } else {
+        r#"
+        (module
+            (func (export "add_values") (param i64 i64) (result i64)
+            local.get 0
+            local.get 1
+            i64.add))
+        "#
+    };
     // Wasmi does not yet support parsing `.wat` so we have to convert
     // out `.wat` into `.wasm` before we compile and validate it.
     let wasm = wat::parse_str(&wat)?;

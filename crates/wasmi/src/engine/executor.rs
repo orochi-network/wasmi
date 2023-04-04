@@ -252,6 +252,14 @@ impl<'ctx, 'engine> Executor<'ctx, 'engine> {
                             predator.push(UntypedValue::from(a + b));
                             predator.update_trace();
                         }
+                        Instr::I64Mul => {
+                            predator.set_instruction(Instr::I64Mul);
+                            predator.set_iaddr(self.ip);
+                            let a: i64 = predator.pop().into();
+                            let b: i64 = predator.pop().into();
+                            predator.push(UntypedValue::from(a * b));
+                            predator.update_trace();
+                        }
                         Instr::Return(drop_keep) => {
                             predator.set_instruction(Instr::Return(drop_keep));
                             predator.set_iaddr(self.ip);
